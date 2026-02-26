@@ -2,7 +2,7 @@
 import json
 import os
 from pathlib import Path
-from tgw_sim.models import Network, Account, VPC, TransitGateway
+from tgw_sim.models import Network, Account, VPC, TransitGateway, PrivateHostedZone
 
 STORAGE_FILE = Path.home() / ".tgw_simulator" / "network.json"
 
@@ -19,6 +19,7 @@ def save_network(network: Network):
     data = {
         "accounts": {},
         "tgws": {},
+        "zones": {},
     }
 
     # Save accounts and VPCs
@@ -53,6 +54,14 @@ def save_network(network: Network):
                 {"account_id": acc_id, "vpc_name": vpc_name}
                 for acc_id, vpc_name in targets
             ]
+
+    # Save hosted zones
+    for zone_name, zone in network.hosted_zones.items():
+        data["zones"][zone_name] = {
+            "account_id": zone.account_id,
+            "records": zone.records,
+            "shared_with": list(zone.shared_with)
+        }
 
     with open(STORAGE_FILE, "w") as f:
         json.dump(data, f, indent=2)
@@ -104,6 +113,13 @@ def load_network() -> Network:
             tgw.route_table[cidr] = [
                 (t["account_id"], t["vpc_name"]) for t in targets
             ]
+
+    # Restore hosted zones
+    for zone_name, zone_data in data.get("zones", {}).items():
+        zone = PrivateHostedZone(zone_name, zone_data["account_id"])
+        zone.records = zone_data.get("records", {})
+        zone.shared_with = set(zone_data.get("shared_with", []))
+        network.hosted_zones[zone_name] = zone
 
     return network
 

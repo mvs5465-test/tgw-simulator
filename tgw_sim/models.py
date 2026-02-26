@@ -81,11 +81,41 @@ class TransitGateway:
         return f"TransitGateway({self.name}, {len(self.attachments)} attachments)"
 
 
+class PrivateHostedZone:
+    """Represents an AWS Private Hosted Zone (DNS zone)"""
+    def __init__(self, name: str, account_id: str):
+        self.name = name  # e.g., "internal.company"
+        self.account_id = account_id  # Account that owns this zone
+        self.records = {}  # hostname -> ip (e.g., "db" -> "10.0.1.5")
+        self.shared_with = set()  # Set of account IDs that can query this zone
+
+    def add_record(self, hostname: str, ip: str):
+        """Add a DNS record to this zone"""
+        self.records[hostname] = ip
+
+    def get_record(self, hostname: str) -> str:
+        """Get a DNS record from this zone"""
+        return self.records.get(hostname)
+
+    def share_with_account(self, account_id: str):
+        """Share this zone with another account"""
+        self.shared_with.add(account_id)
+
+    def can_query(self, account_id: str) -> bool:
+        """Check if an account can query this zone"""
+        # Own account can always query, plus shared accounts
+        return account_id == self.account_id or account_id in self.shared_with
+
+    def __repr__(self):
+        return f"PHZ({self.name}, {len(self.records)} records)"
+
+
 class Network:
     """Represents the entire simulated network"""
     def __init__(self):
         self.accounts = {}  # account_name -> Account
         self.transit_gateways = {}  # tgw_name -> TransitGateway
+        self.hosted_zones = {}  # zone_name -> PrivateHostedZone
 
     def create_account(self, name: str, account_id: str) -> Account:
         """Create an account"""
@@ -117,5 +147,35 @@ class Network:
         """Get a TGW by name"""
         return self.transit_gateways.get(name)
 
+    def create_hosted_zone(self, zone_name: str, owner_account: str) -> PrivateHostedZone:
+        """Create a Private Hosted Zone owned by an account"""
+        if zone_name in self.hosted_zones:
+            raise ValueError(f"Zone {zone_name} already exists")
+
+        account = self.get_account(owner_account)
+        if not account:
+            raise ValueError(f"Account {owner_account} not found")
+
+        zone = PrivateHostedZone(zone_name, account.account_id)
+        self.hosted_zones[zone_name] = zone
+        return zone
+
+    def get_hosted_zone(self, zone_name: str) -> PrivateHostedZone:
+        """Get a hosted zone by name"""
+        return self.hosted_zones.get(zone_name)
+
+    def resolve_dns(self, hostname: str, zone_name: str, requester_account_id: str) -> str:
+        """Resolve a DNS query: hostname.zone_name from a requesting account"""
+        zone = self.get_hosted_zone(zone_name)
+        if not zone:
+            return None
+
+        # Check if requester can query this zone
+        if not zone.can_query(requester_account_id):
+            return None
+
+        # Look up the hostname in the zone
+        return zone.get_record(hostname)
+
     def __repr__(self):
-        return f"Network({len(self.accounts)} accounts, {len(self.transit_gateways)} TGWs)"
+        return f"Network({len(self.accounts)} accounts, {len(self.transit_gateways)} TGWs, {len(self.hosted_zones)} zones)"

@@ -150,6 +150,112 @@ def list(tgw_name):
         click.echo(f"  {att['account_id']}/{att['vpc'].name} ({att['cidr']})")
 
 
+@cli.group()
+def zone():
+    """Manage Private Hosted Zones (DNS)"""
+    pass
+
+
+@zone.command()
+@click.argument("zone_name")
+@click.argument("owner_account")
+def create(zone_name, owner_account):
+    """Create a Private Hosted Zone owned by an account"""
+    try:
+        zone = network.create_hosted_zone(zone_name, owner_account)
+        save_network(network)
+        click.echo(f"✓ Created zone: {zone}")
+    except ValueError as e:
+        click.echo(f"✗ Error: {e}", err=True)
+
+
+@zone.command(name="add-record")
+@click.argument("zone_name")
+@click.argument("hostname")
+@click.argument("ip")
+def add_record(zone_name, hostname, ip):
+    """Add a DNS record to a zone"""
+    try:
+        zone = network.get_hosted_zone(zone_name)
+        if not zone:
+            raise ValueError(f"Zone {zone_name} not found")
+
+        zone.add_record(hostname, ip)
+        save_network(network)
+        click.echo(f"✓ Added record: {hostname}.{zone_name} -> {ip}")
+    except ValueError as e:
+        click.echo(f"✗ Error: {e}", err=True)
+
+
+@zone.command()
+@click.argument("zone_name")
+@click.argument("requester_account")
+def list(zone_name, requester_account):
+    """List DNS records in a zone (if requester can access)"""
+    try:
+        zone = network.get_hosted_zone(zone_name)
+        if not zone:
+            raise ValueError(f"Zone {zone_name} not found")
+
+        acc = network.get_account(requester_account)
+        if not acc:
+            raise ValueError(f"Account {requester_account} not found")
+
+        if not zone.can_query(acc.account_id):
+            raise ValueError(f"Account {requester_account} cannot access zone {zone_name}")
+
+        if not zone.records:
+            click.echo(f"No records in {zone_name}")
+            return
+
+        click.echo(f"Records in {zone_name}:")
+        for hostname, ip in zone.records.items():
+            click.echo(f"  {hostname}.{zone_name} -> {ip}")
+    except ValueError as e:
+        click.echo(f"✗ Error: {e}", err=True)
+
+
+@zone.command()
+@click.argument("zone_name")
+@click.argument("target_account")
+def share(zone_name, target_account):
+    """Share a zone with another account"""
+    try:
+        zone = network.get_hosted_zone(zone_name)
+        if not zone:
+            raise ValueError(f"Zone {zone_name} not found")
+
+        target = network.get_account(target_account)
+        if not target:
+            raise ValueError(f"Account {target_account} not found")
+
+        zone.share_with_account(target.account_id)
+        save_network(network)
+        click.echo(f"✓ Shared {zone_name} with {target_account}")
+    except ValueError as e:
+        click.echo(f"✗ Error: {e}", err=True)
+
+
+@cli.command(name="query-dns")
+@click.argument("hostname")
+@click.argument("zone_name")
+@click.argument("requester_account")
+def query_dns(hostname, zone_name, requester_account):
+    """Query a DNS record (simulates resolver lookup)"""
+    try:
+        acc = network.get_account(requester_account)
+        if not acc:
+            raise ValueError(f"Account {requester_account} not found")
+
+        ip = network.resolve_dns(hostname, zone_name, acc.account_id)
+        if ip:
+            click.echo(f"✓ {hostname}.{zone_name} -> {ip}")
+        else:
+            click.echo(f"✗ Cannot resolve {hostname}.{zone_name} (access denied or not found)")
+    except ValueError as e:
+        click.echo(f"✗ Error: {e}", err=True)
+
+
 @cli.command()
 def status():
     """Show network status"""
@@ -162,3 +268,7 @@ def status():
     click.echo(f"Transit Gateways: {len(network.transit_gateways)}")
     for name, tgw in network.transit_gateways.items():
         click.echo(f"  {tgw}")
+    click.echo()
+    click.echo(f"Hosted Zones: {len(network.hosted_zones)}")
+    for name, zone in network.hosted_zones.items():
+        click.echo(f"  {zone}")
